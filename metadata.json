@@ -1,0 +1,10 @@
+{
+  "name": "MUTUAL INVESTMENT-2026",
+  "description": "Together We Grow — Cooperative savings, institutional FDR, bank ledger, and 6-step shareholder KYC management for web and Android.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

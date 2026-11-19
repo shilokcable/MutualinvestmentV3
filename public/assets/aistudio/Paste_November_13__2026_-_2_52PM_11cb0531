@@ -1,0 +1,418 @@
+const CFG = {
+  APP_NAME: 'MITUAL INVESTMENT-2026',
+  TIMEZONE: 'Asia/Dhaka',
+  SESSION_SECONDS: 21600,
+  MAX_MEMBERS: 22
+};
+
+const SHEETS = {
+  SETTINGS: 'Settings',
+  MEMBERS: 'Members',
+  TX: 'Transactions',
+  FDR: 'FDR',
+  BANK: 'Bank Account',
+  KYC: 'KYC'
+};
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle(CFG.APP_NAME)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function getSS_() {
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getSheet_(name) {
+  const sh = getSS_().getSheetByName(name);
+  if (!sh) throw new Error('Sheet not found: ' + name);
+  return sh;
+}
+
+
+function ensureKycSheet_() {
+  const ss=getSS_();
+  let sh=ss.getSheetByName(SHEETS.KYC);
+  const headers=['Timestamp','Member ID','Member Name','Shareholder NID','Date of Birth','Father Name','Mother Name','Spouse Name','Marital Status','Profession','Permanent Address','Present Address','Bangladesh Phone','WhatsApp Number','Overseas Phone','Email','TIN Number','TIN Certificate URL','Passport Number','Passport Copy URL','Shareholder Photo URL','Shareholder NID Front URL','Shareholder NID Back URL','Nominee Name','Nominee NID','Nominee NID Front URL','Nominee NID Back URL','Nominee Date of Birth','Nominee Relation','Nominee Phone','Nominee Address','Nominee Photo URL','KYC Status','KYC PDF URL','Last Updated','Notes','Update Permission','Update Approved Date','Update Admin Note'];
+  if(!sh){
+    sh=ss.insertSheet(SHEETS.KYC);
+    sh.getRange(1,1,2,headers.length).setValues([['MITUAL INVESTMENT-2026 | SHAREHOLDER & NOMINEE KYC RECORDS',...Array(headers.length-1).fill('')],headers]);
+    sh.getRange(1,1,1,headers.length).merge(); sh.setFrozenRows(2);
+  } else {
+    if(sh.getLastColumn()<headers.length) sh.insertColumnsAfter(Math.max(1,sh.getLastColumn()),headers.length-sh.getLastColumn());
+    const h=sh.getRange(2,1,1,headers.length).getValues()[0];
+    if(String(h[0]||'')!=='Timestamp') sh.getRange(2,1,1,headers.length).setValues([headers]);
+    else sh.getRange(2,1,1,headers.length).setValues([headers]);
+    if(sh.getRange(1,1).getValue()!== 'MITUAL INVESTMENT-2026 | SHAREHOLDER & NOMINEE KYC RECORDS'){
+      sh.insertRowBefore(1); sh.getRange(1,1,1,headers.length).merge(); sh.getRange(1,1).setValue('MITUAL INVESTMENT-2026 | SHAREHOLDER & NOMINEE KYC RECORDS');
+    }
+    sh.setFrozenRows(2);
+  }
+  sh.getRange(1,1,1,headers.length).setFontWeight('bold').setFontSize(14);
+  sh.getRange(2,1,1,headers.length).setFontWeight('bold').setBackground('#eaf1fb');
+  return sh;
+}
+function ensureKycRequestSheet_(){
+  const ss=getSS_(); let sh=ss.getSheetByName('KYC Requests');
+  const headers=['Request ID','Member ID','Member Name','Request','Request Date','Status','Approved Date','Admin Note'];
+  if(!sh){sh=ss.insertSheet('KYC Requests');sh.getRange(1,1,1,headers.length).setValues([headers]);sh.setFrozenRows(1);}
+  else {if(sh.getLastColumn()<headers.length)sh.insertColumnsAfter(sh.getLastColumn(),headers.length-sh.getLastColumn());sh.getRange(1,1,1,headers.length).setValues([headers]);sh.setFrozenRows(1);}
+  return sh;
+}
+function kycFolder_(){const props=PropertiesService.getScriptProperties(),existing=props.getProperty('KYC_FOLDER_ID');if(existing){try{return DriveApp.getFolderById(existing)}catch(e){}}const folder=DriveApp.createFolder(CFG.APP_NAME+' - KYC Records');props.setProperty('KYC_FOLDER_ID',folder.getId());return folder;}
+function dataUrlBlob_(dataUrl,fileName){if(!dataUrl||String(dataUrl).indexOf('base64,')<0)return null;const parts=String(dataUrl).split(',');const mime=(parts[0].match(/data:([^;]+)/)||[,'application/octet-stream'])[1];return Utilities.newBlob(Utilities.base64Decode(parts[1]),mime,fileName)}
+function saveKycFile_(folder,dataUrl,fileName){const blob=dataUrlBlob_(dataUrl,fileName);if(!blob)return '';let ext=blob.getContentType()==='application/pdf'?'.pdf':'.jpg';return folder.createFile(blob).setName(fileName.replace(/\.(jpg|jpeg|png|pdf)$/i,ext)).getUrl()}
+function findKyc_(memberId){const sh=ensureKycSheet_(),rows=readRows_(sh,3,39),id=String(memberId||'').trim().toUpperCase();for(let i=0;i<rows.length;i++)if(String(rows[i][1]||'').trim().toUpperCase()===id)return {row:i+3,values:rows[i]};return null;}
+function driveImageData_(url){if(!url)return '';try{const id=String(url).match(/[-\w]{25,}/);if(!id)return '';const b=DriveApp.getFileById(id[0]).getBlob();return 'data:'+b.getContentType()+';base64,'+Utilities.base64Encode(b.getBytes())}catch(e){return ''}}
+function driveFileData_(url){if(!url)return '';try{const id=String(url).match(/[-\w]{25,}/);if(!id)return '';const b=DriveApp.getFileById(id[0]).getBlob();return 'data:'+b.getContentType()+';base64,'+Utilities.base64Encode(b.getBytes())}catch(e){return ''}}
+function kycStatusForMember_(memberId){const x=findKyc_(memberId);if(!x)return {completed:false,memberId:String(memberId||'')};const v=x.values;let requestStatus='';try{const rs=ensureKycRequestSheet_(),rows=readRows_(rs,2,8).filter(r=>String(r[1]||'').toUpperCase()===String(memberId||'').toUpperCase());if(rows.length)requestStatus=String(rows[rows.length-1][5]||'Pending')}catch(e){}return {completed:String(v[32]||'').toLowerCase()==='completed',memberId:String(v[1]||''),name:String(v[2]||''),pdfUrl:String(v[33]||''),updated:date_(v[34]),photoData:driveImageData_(v[20]),pdfData:driveFileData_(v[33]),requestStatus:requestStatus,updatePermission:String(v[36]||'')==='Approved'};}
+function kycDetail_(x,includePdf){const v=x.values;return {completed:String(v[32]||'').toLowerCase()==='completed',memberId:String(v[1]||''),name:String(v[2]||''),nidNumber:String(v[3]||''),dob:String(v[4]||''),fatherName:String(v[5]||''),motherName:String(v[6]||''),spouseName:String(v[7]||''),maritalStatus:String(v[8]||''),profession:String(v[9]||''),permanentAddress:String(v[10]||''),presentAddress:String(v[11]||''),bdPhone:String(v[12]||''),whatsapp:String(v[13]||''),overseasPhone:String(v[14]||''),email:String(v[15]||''),tinNumber:String(v[16]||''),passportNumber:String(v[18]||''),nomineeName:String(v[23]||''),nomineeNid:String(v[24]||''),nomineeDob:String(v[27]||''),nomineeRelation:String(v[28]||''),nomineePhone:String(v[29]||''),nomineeAddress:String(v[30]||''),pdfUrl:String(v[33]||''),updated:date_(v[34]),notes:String(v[35]||''),updatePermission:String(v[36]||'')==='Approved',updateApprovedDate:date_(v[37]),adminNote:String(v[38]||''),requestStatus:String(v[36]||''),photoData:driveImageData_(v[20]),pdfData:includePdf?driveFileData_(v[33]):''};}
+function saveKYC(token,data){
+  const s=session_(token,'member'),memberId=s.memberId,me=getMembers_().find(r=>String(r[0]).toUpperCase()===String(memberId).toUpperCase());if(!me)throw new Error('Member not found.');
+  const sh=ensureKycSheet_(),old=findKyc_(memberId);
+  if(old && String(old.values[32]||'').toLowerCase()==='completed' && String(old.values[36]||'')!=='Approved')throw new Error('KYC already submitted. Admin approval is required before updating.');
+  const req=['shareholderName','nidNumber','dob','permanentAddress','presentAddress','bdPhone','profession','fatherName','motherName','nomineeName','nomineeNid','nomineeRelation','nomineeDob'];req.forEach(k=>{if(!String(data&&data[k]||'').trim())throw new Error('KYC-এর প্রয়োজনীয় তথ্য পূরণ করুন: '+k)});
+  if(!data.shareholderNidFront||!data.shareholderNidBack||!data.memberPhoto||!data.nomineeNidFront||!data.nomineeNidBack||!data.nomineePhoto)throw new Error('Shareholder ও Nominee-এর NID Front/Back এবং দুজনের Photo দিতে হবে।');
+  const folder=kycFolder_(),stamp=Utilities.formatDate(new Date(),CFG.TIMEZONE,'yyyyMMdd_HHmmss');
+  const sf=saveKycFile_(folder,data.shareholderNidFront,memberId+'_SHAREHOLDER_NID_FRONT_'+stamp+'.jpg');
+  const sb=saveKycFile_(folder,data.shareholderNidBack,memberId+'_SHAREHOLDER_NID_BACK_'+stamp+'.jpg');
+  const mp=saveKycFile_(folder,data.memberPhoto,memberId+'_SHAREHOLDER_PHOTO_'+stamp+'.jpg');
+  const nf=saveKycFile_(folder,data.nomineeNidFront,memberId+'_NOMINEE_NID_FRONT_'+stamp+'.jpg');
+  const nb=saveKycFile_(folder,data.nomineeNidBack,memberId+'_NOMINEE_NID_BACK_'+stamp+'.jpg');
+  const np=saveKycFile_(folder,data.nomineePhoto,memberId+'_NOMINEE_PHOTO_'+stamp+'.jpg');
+  const tin=saveKycFile_(folder,data.tinCertificate,memberId+'_TIN_CERTIFICATE_'+stamp+'.jpg');
+  const pass=saveKycFile_(folder,data.passportCopy,memberId+'_PASSPORT_'+stamp+'.jpg');
+  // Use actual Drive file bytes in the generated PDF. Direct Drive URLs are not reliably renderable by HtmlService -> PDF.
+  const pdfNidSf=driveImageData_(sf), pdfNidSb=driveImageData_(sb), pdfMemberPhoto=driveImageData_(mp);
+  const pdfNidNf=driveImageData_(nf), pdfNidNb=driveImageData_(nb), pdfNomineePhoto=driveImageData_(np);
+  const pdfTin=driveImageData_(tin), pdfPassport=driveImageData_(pass);
+  const now=new Date();
+  const vals=[now,memberId,String(data.shareholderName||me[1]||''),String(data.nidNumber||''),String(data.dob||''),String(data.fatherName||''),String(data.motherName||''),String(data.spouseName||''),String(data.maritalStatus||''),String(data.profession||''),String(data.permanentAddress||''),String(data.presentAddress||''),String(data.bdPhone||''),String(data.whatsapp||''),String(data.overseasPhone||''),String(data.email||''),String(data.tinNumber||''),tin,String(data.passportNumber||''),pass,mp,sf,sb,String(data.nomineeName||''),String(data.nomineeNid||''),nf,nb,String(data.nomineeDob||''),String(data.nomineeRelation||''),String(data.nomineePhone||''),String(data.nomineeAddress||''),np,'Completed','',now,String(data.notes||''),'',old?old.values[37]||'':'',old?old.values[38]||'':''];
+  if(old)sh.getRange(old.row,1,1,39).setValues([vals]);else sh.getRange(sh.getLastRow()+1,1,1,39).setValues([vals]);
+  const krow=old?old.row:sh.getLastRow();
+  const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const item=(l,v,full)=>'<div class="item '+(full?'full':'')+'"><div class="label">'+esc(l)+'</div><div class="value">'+esc(v||'—')+'</div></div>';
+  const image=(src,label,cls)=>src?'<div class="doc-wrap '+(cls||'')+'">'+(label?'<div class="doc-title">'+esc(label)+'</div>':'')+'<img class="doc-image" src="'+src+'"></div>':'';
+  const pair=(front,back,label)=>'<div class="nid-pair"><div class="pair-title">'+esc(label)+'</div>'+image(front,'Front Side','nid-img')+image(back,'Back Side','nid-img')+'</div>';
+  const logo=data.logoData&&String(data.logoData).indexOf('base64,')>=0?'<img src="'+data.logoData+'" class="logo">':'<h1>MUTUAL INVESTMENT-2026</h1>';
+const html='<!doctype html><html><head><meta charset="UTF-8"><style>@page{size:A4;margin:8mm}@page identity{size:A4;margin:3mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17324b;margin:0;background:#fff;font-size:10pt;line-height:1.25}.page{width:100%;min-height:0;page-break-after:always;position:relative}.page:last-child{page-break-after:auto}.head{background:linear-gradient(135deg,#0b3d91,#10a85a);color:#fff;border-radius:10px;padding:9px 12px;text-align:center}.logo{width:205px;max-width:70%;height:auto}.sub{font-size:8.5pt;margin-top:3px}.title{color:#0b3d91;font-size:18pt;font-weight:800;margin:8px 0 6px;text-align:center}.section{background:linear-gradient(90deg,#0b3d91,#1769e0,#10a85a);color:#fff;padding:5px 8px;border-radius:6px;margin:6px 0 5px;font-size:11pt;font-weight:800}.meta-strip{display:flex;justify-content:space-between;gap:8px;background:#f1f6fd;border:1px solid #dce6f2;border-radius:6px;padding:5px 7px;margin-bottom:6px;font-size:8.5pt;font-weight:700;color:#35536f}.person-row{display:grid;grid-template-columns:1.5in 1fr;gap:8px;border:1px solid #dce6f2;border-radius:8px;padding:6px;margin-bottom:6px;break-inside:avoid}.person-photo,.photo-placeholder{width:1.5in;height:2in;object-fit:cover;border:1px solid #c7d7e8;border-radius:4px;background:#f4f7fb;display:block;margin:auto}.photo-placeholder{display:flex;align-items:center;justify-content:center;color:#789;font-size:8pt}.person-info{display:grid;grid-template-columns:1fr 1fr;gap:4px}.item{border:1px solid #dce6f2;padding:4px 5px;border-radius:4px;background:#fbfdff;min-height:28px}.item.full{grid-column:1/-1}.label{font-size:7pt;color:#6b7a90;font-weight:bold;text-transform:uppercase}.value{font-size:10pt;margin-top:1px;white-space:pre-wrap;word-break:break-word}.footer{text-align:center;color:#6b7a90;font-size:7.5pt;border-top:1px solid #dce6f2;margin-top:5px;padding-top:4px}.identity-page{page:identity}.identity-page .head{padding:2px 6px}.identity-page .logo{width:100px}.identity-page .sub{font-size:6pt}.identity-page .doc-page-title{font-size:9pt;margin:1px 0 1px}.identity-page .nid-person{padding:1px}.identity-page .nid-label{font-size:5.5pt;margin:0}.identity-page .footer{font-size:6pt;margin-top:1px;padding-top:1px}.doc-page-title{font-size:16pt;font-weight:800;color:#0b3d91;text-align:center;margin:2px 0 5px}.nid-grid{display:grid;grid-template-columns:1fr 1fr;gap:7mm;align-items:start}.nid-person{border:1px solid #dce6f2;border-radius:8px;padding:5px;break-inside:avoid}.nid-person-title{font-size:9pt;font-weight:800;color:#0b3d91;text-align:center;margin-bottom:1px}.nid-label{font-size:8pt;font-weight:800;color:#52708d;margin:3px 0}.nid-box{width:3.5in;height:5in;display:flex;align-items:center;justify-content:center;margin:0 auto 1px;border:1px solid #e2e9f1;border-radius:4px;background:#fff;overflow:hidden}.nid-box .doc-image{width:100%;height:100%;object-fit:contain;display:block}.passport-page{display:flex;flex-direction:column;align-items:center}.passport-box{width:3.5in;height:6in;display:flex;align-items:center;justify-content:center;margin:4px auto 0;border:1px solid #e2e9f1;border-radius:5px;background:#fff;overflow:hidden}.passport-box .doc-image{width:100%;height:100%;object-fit:contain;display:block}.passport-note{font-size:8pt;color:#6b7a90;text-align:center;margin-top:4px}.tin-page{display:flex;flex-direction:column}.tin-wrap{width:100%;height:252mm;border:1px solid #dce6f2;border-radius:8px;padding:0;display:flex;align-items:center;justify-content:center;overflow:hidden}.tin-box{width:100%;height:250mm;display:flex;align-items:center;justify-content:center;overflow:hidden}.tin-box .doc-image{max-width:100%;max-height:250mm;width:auto;height:auto;object-fit:contain;display:block}.no-doc{padding:18px;text-align:center;color:#7a8da1;border:1px dashed #c8d6e4;border-radius:8px}.small-note{text-align:center;color:#6b7a90;font-size:8pt;margin:4px 0}</style></head><body><div class="page"><div class="head">'+logo+'<div class="sub">Together We Grow • Confidential KYC Record</div></div><div class="title">SHAREHOLDER & NOMINEE KYC PROFILE</div><div class="meta-strip"><span>Member ID: '+esc(memberId)+'</span><span>Generated: '+esc(Utilities.formatDate(now,CFG.TIMEZONE,'dd-MM-yyyy HH:mm'))+'</span></div><div class="section">SHAREHOLDER INFORMATION</div><div class="person-row">'+(pdfMemberPhoto?'<img class="person-photo" src="'+pdfMemberPhoto+'">':'<div class="photo-placeholder">Shareholder Photo</div>')+'<div class="person-info">'+item('Shareholder Name',data.shareholderName||me[1])+item('Member ID',memberId)+item('NID Number',data.nidNumber)+item('Date of Birth',data.dob)+item('Father Name',data.fatherName)+item('Mother Name',data.motherName)+item('Spouse Name',data.spouseName)+item('Marital Status',data.maritalStatus)+item('Profession',data.profession)+item('Bangladesh Phone',data.bdPhone)+item('WhatsApp Number',data.whatsapp)+item('Overseas Phone',data.overseasPhone)+item('Email',data.email)+item('TIN Number',data.tinNumber)+item('Passport Number',data.passportNumber)+item('Permanent Address',data.permanentAddress,true)+item('Present Address',data.presentAddress,true)+'</div></div><div class="section">NOMINEE INFORMATION</div><div class="person-row">'+(pdfNomineePhoto?'<img class="person-photo" src="'+pdfNomineePhoto+'">':'<div class="photo-placeholder">Nominee Photo</div>')+'<div class="person-info">'+item('Nominee Name',data.nomineeName)+item('Nominee NID',data.nomineeNid)+item('Date of Birth',data.nomineeDob)+item('Relation',data.nomineeRelation)+item('Phone',data.nomineePhone)+item('Address',data.nomineeAddress,true)+'</div></div><div class="footer">'+esc(CFG.APP_NAME)+' • Confidential KYC Record</div></div><div class="page identity-page"><div class="head">'+logo+'<div class="sub">Shareholder & Nominee Identity Documents</div></div><div class="doc-page-title">NID FRONT & BACK — 3.5 × 5 INCH</div><div class="nid-grid"><div class="nid-person"><div class="nid-person-title">SHAREHOLDER NID</div><div class="nid-label">Front Side</div>'+image(pdfNidSf,'','nid-box')+'<div class="nid-label">Back Side</div>'+image(pdfNidSb,'','nid-box')+'</div><div class="nid-person"><div class="nid-person-title">NOMINEE NID</div><div class="nid-label">Front Side</div>'+image(pdfNidNf,'','nid-box')+'<div class="nid-label">Back Side</div>'+image(pdfNidNb,'','nid-box')+'</div></div><div class="footer">Shareholder and Nominee NID Front/Back are printed together on one A4 page.</div></div><div class="page passport-page"><div class="head">'+logo+'<div class="sub">Passport Document</div></div><div class="doc-page-title">PASSPORT COPY — 3.5 × 6 INCH</div>'+(image(pdfPassport,'','passport-box')||'<div class="no-doc">Passport copy not provided</div>')+'<div class="passport-note">Passport document is displayed without forcing it into NID dimensions.</div><div class="footer">'+esc(CFG.APP_NAME)+' • Confidential KYC Record</div></div><div class="page tin-page"><div class="head">'+logo+'<div class="sub">Tax Identification Document</div></div><div class="doc-page-title">TIN CERTIFICATE — A4</div><div class="small-note">Shareholder TIN: '+esc(data.tinNumber||'Not provided')+'</div><div class="tin-wrap">'+(image(pdfTin,'','tin-box')||'<div class="no-doc">TIN Certificate not provided</div>')+'</div><div class="footer">'+esc(CFG.APP_NAME)+' • Confidential KYC Record</div></div></body></html>';
+  const pdfFile=folder.createFile(HtmlService.createHtmlOutput(html).getBlob().setName(memberId+'_KYC_'+stamp+'.pdf').getAs(MimeType.PDF));
+  sh.getRange(krow,34).setValue(pdfFile.getUrl());sh.getRange(krow,35).setValue(now);sh.getRange(krow,37).setValue('');
+  return {ok:true,pdfUrl:pdfFile.getUrl(),pdfData:'data:application/pdf;base64,'+Utilities.base64Encode(pdfFile.getBlob().getBytes()),status:'Completed'};
+}
+function getKYC(token,includePdf){const s=session_(token,'member'),x=findKyc_(s.memberId);if(!x)return {completed:false,memberId:s.memberId,name:s.memberId};return kycDetail_(x,includePdf!==false);}
+function submitKycUpdateRequest(token,requestText){const s=session_(token,'member'),x=findKyc_(s.memberId);if(!x||String(x.values[32]||'').toLowerCase()!=='completed')throw new Error('প্রথমে KYC submit করুন।');const sh=ensureKycRequestSheet_(),id='KYC-REQ-'+Utilities.formatDate(new Date(),CFG.TIMEZONE,'yyyyMMdd-HHmmss');sh.appendRow([id,s.memberId,String(x.values[2]||''),String(requestText||''),new Date(),'Pending','', '']);return {ok:true,id:id};}
+function getKycRequests_(){const sh=ensureKycRequestSheet_(),rows=readRows_(sh,2,8);return rows.filter(r=>r[0]).map(r=>({id:String(r[0]),memberId:String(r[1]),name:String(r[2]),request:String(r[3]),requestDate:date_(r[4]),status:String(r[5]||'Pending'),approvedDate:date_(r[6]),adminNote:String(r[7]||'')}));}
+function markKycRequestReviewed(token,requestId,status,note){session_(token,'admin');const sh=ensureKycRequestSheet_(),rows=readRows_(sh,2,8);const idx=rows.findIndex(r=>String(r[0])===String(requestId));if(idx<0)throw new Error('Request not found.');const row=idx+2,st=String(status||'Pending');sh.getRange(row,6).setValue(st);sh.getRange(row,7).setValue(st==='Approved'?new Date():'');sh.getRange(row,8).setValue(String(note||''));if(st==='Approved'){const memberId=String(rows[idx][1]);const k=findKyc_(memberId);if(k){const ks=ensureKycSheet_();ks.getRange(k.row,37).setValue('Approved');ks.getRange(k.row,38).setValue(new Date());ks.getRange(k.row,39).setValue(String(note||''));}}return {ok:true};}
+function changeProfilePhoto(token,dataUrl){const s=session_(token,'member'),x=findKyc_(s.memberId);if(!x||String(x.values[32]||'').toLowerCase()!=='completed')throw new Error('KYC complete নয়।');const folder=kycFolder_(),stamp=Utilities.formatDate(new Date(),CFG.TIMEZONE,'yyyyMMdd_HHmmss'),url=saveKycFile_(folder,dataUrl,s.memberId+'_PROFILE_PHOTO_'+stamp+'.jpg');if(!url)throw new Error('ছবি পাওয়া যায়নি।');const sh=ensureKycSheet_();sh.getRange(x.row,21).setValue(url);return {ok:true,photoData:driveImageData_(url)};}
+function readRows_(sh, startRow, numCols) {
+  const last = sh.getLastRow();
+  const count = last - startRow + 1;
+  if (count < 1) return [];
+  return sh.getRange(startRow, 1, count, numCols).getValues();
+}
+
+function date_(v) {
+  if (!v) return '';
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, CFG.TIMEZONE, 'dd-MM-yyyy');
+}
+
+function isoDate_(v) {
+  if (!v) return '';
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, CFG.TIMEZONE, 'yyyy-MM-dd');
+}
+
+function num_(v) {
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+}
+
+function money_(v) {
+  return num_(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function session_(token, requiredRole) {
+  if (!token) throw new Error('Session expired. Please login again.');
+  const cache = CacheService.getScriptCache();
+  const raw = cache.get('sess_' + token);
+  if (!raw) throw new Error('Session expired. Please login again.');
+  const s = JSON.parse(raw);
+  if (requiredRole && s.role !== requiredRole) throw new Error('Unauthorized.');
+  cache.put('sess_' + token, raw, CFG.SESSION_SECONDS);
+  return s;
+}
+
+function loginMember(memberId, password) {
+  const sh = getSheet_(SHEETS.MEMBERS);
+  const rows = readRows_(sh, 4, 7);
+  const id = String(memberId || '').trim().toUpperCase();
+  const pass = String(password || '').trim();
+  const found = rows.find(r => String(r[0] || '').trim().toUpperCase() === id);
+  if (!found) return {ok:false, message:'Member ID সঠিক নয়।'};
+  if (String(found[4] || '').toLowerCase() === 'inactive') return {ok:false, message:'এই সদস্যের account inactive।'};
+  if (String(found[6] || '').trim() !== pass) return {ok:false, message:'Password সঠিক নয়।'};
+  const token = Utilities.getUuid();
+  CacheService.getScriptCache().put('sess_' + token, JSON.stringify({role:'member', memberId:id}), CFG.SESSION_SECONDS);
+  return {ok:true, token:token, role:'member', memberId:id, name:String(found[1] || '')};
+}
+
+function loginAdmin(pin) {
+  const sh = getSheet_(SHEETS.SETTINGS);
+  const stored = String(sh.getRange('B2').getDisplayValue()).trim();
+  if (!stored || String(pin || '').trim() !== stored) return {ok:false, message:'Admin PIN সঠিক নয়।'};
+  const token = Utilities.getUuid();
+  CacheService.getScriptCache().put('sess_' + token, JSON.stringify({role:'admin'}), CFG.SESSION_SECONDS);
+  return {ok:true, token:token, role:'admin'};
+}
+
+function logout(token) {
+  if (token) CacheService.getScriptCache().remove('sess_' + token);
+  return true;
+}
+
+function getMembers_() {
+  return readRows_(getSheet_(SHEETS.MEMBERS), 4, 7).filter(r => r[0]);
+}
+
+function getTransactions_() {
+  return readRows_(getSheet_(SHEETS.TX), 4, 6).filter(r => r[0] || r[1] || r[3]);
+}
+
+function ensureFdrSheet_() {
+  const ss = getSS_();
+  let sh = ss.getSheetByName(SHEETS.FDR);
+  if (!sh) {
+    sh = ss.insertSheet(SHEETS.FDR);
+  }
+  const headers = ['FDR ID','FDR Amount','FDR Date','Tenure (Months)','Maturity Date','Bank Name','FDR No','Status','Return Date','Returned Amount','Bank Approval/Reference','Note'];
+  if (sh.getLastRow() < 1) {
+    sh.getRange(1,1,1,headers.length).setValues([headers]);
+  } else {
+    const h = sh.getRange(1,1,1,headers.length).getValues()[0];
+    if (String(h[0]||'') !== 'FDR ID') sh.getRange(1,1,1,headers.length).setValues([headers]);
+  }
+  sh.setFrozenRows(1);
+  return sh;
+}
+
+function getFdrRows_() {
+  const sh = ensureFdrSheet_();
+  const last = sh.getLastRow();
+  if (last < 2) return [];
+  return sh.getRange(2,1,last-1,12).getValues().filter(r => r[0] || r[1]);
+}
+
+function getBankRows_() {
+  return readRows_(getSheet_(SHEETS.BANK), 2, 5).filter(r => r[0] || r[1] || r[2]);
+}
+
+function memberNet_(memberId, txRows) {
+  const id = String(memberId).toUpperCase();
+  return txRows.filter(r => String(r[1] || '').toUpperCase() === id).reduce((sum, r) => {
+    const amount = num_(r[3]);
+    return sum + (String(r[4] || '').toLowerCase().includes('withdraw') ? -amount : amount);
+  }, 0);
+}
+
+function fdrStatus_(r) {
+  if (r[8]) return 'Returned';
+  const maturity = r[4];
+  if (maturity && new Date(maturity) < new Date()) return 'Maturity Pending';
+  return 'Active';
+}
+
+function accounts_() {
+  const settings = getSheet_(SHEETS.SETTINGS);
+  const tx = getTransactions_();
+  const fdr = getFdrRows_();
+  const bank = getBankRows_();
+  const opening = num_(settings.getRange('B9').getValue());
+
+  let memberNet = 0;
+  tx.forEach(r => {
+    const amount = num_(r[3]);
+    memberNet += String(r[4] || '').toLowerCase().includes('withdraw') ? -amount : amount;
+  });
+
+  let bankNet = 0;
+  bank.forEach(r => {
+    const type = String(r[1] || '');
+    const amount = num_(r[2]);
+    if (type === 'Bank Credit' || type === 'Other Credit') bankNet += amount;
+    if (type === 'Withdrawal' || type === 'Other Expense') bankNet -= amount;
+  });
+
+  let placed = 0, returned = 0, activeFdr = 0, pendingFdr = 0;
+  fdr.forEach(r => {
+    const amount = num_(r[1]);
+    const status = fdrStatus_(r);
+    placed += amount;
+    if (r[8]) returned += num_(r[9]);
+    if (status === 'Active' || status === 'Maturity Pending') {
+      activeFdr += amount;
+      if (status === 'Maturity Pending') pendingFdr++;
+    }
+  });
+
+  const mainBank = opening + memberNet + bankNet - placed + returned;
+  const totalInstitutional = mainBank + activeFdr;
+  return {opening, memberNet, bankNet, placed, returned, mainBank, fdrBalance:activeFdr, totalInstitutional, activeFdrCount: fdr.filter(r=>fdrStatus_(r)!=='Returned').length, pendingFdr};
+}
+
+function dashboard(token) {
+  const s = session_(token);
+  const members = getMembers_();
+  const tx = getTransactions_();
+  const fdr = getFdrRows_();
+
+  if (s.role === 'member') {
+    const me = members.find(r => String(r[0]).toUpperCase() === String(s.memberId).toUpperCase());
+    if (!me) throw new Error('Member not found.');
+    const mine = tx.filter(r => String(r[1]).toUpperCase() === String(s.memberId).toUpperCase());
+    const transactions = mine.map(r => ({date:date_(r[0]), type:String(r[4] || 'Deposit'), amount:num_(r[3]), note:String(r[5] || '')}));
+    const total = memberNet_(s.memberId, tx);
+    // Institutional account summary is read-only for members.
+    // It is NOT tied to the member's individual balance.
+    const acc = accounts_();
+    return {
+      ok:true, role:'member', memberId:s.memberId, name:String(me[1] || ''), mobile:String(me[2] || ''), total:total,
+      mainBank:acc.mainBank,
+      fdrBalance:acc.fdrBalance,
+      totalInstitutional:acc.totalInstitutional,
+      activeFdr:acc.activeFdrCount,
+      pendingFdr:acc.pendingFdr,
+      kyc:kycStatusForMember_(s.memberId),
+      transactions:transactions,
+      accountStatus:String(me[4] || 'Active')
+    };
+  }
+
+  const acc = accounts_();
+  const nowYM = Utilities.formatDate(new Date(), CFG.TIMEZONE, 'yyyy-MM');
+  const thisMonth = tx.reduce((sum,r) => {
+    if (!r[0]) return sum;
+    const ym = Utilities.formatDate(new Date(r[0]), CFG.TIMEZONE, 'yyyy-MM');
+    if (ym !== nowYM) return sum;
+    const a=num_(r[3]);
+    return sum + (String(r[4]||'').toLowerCase().includes('withdraw') ? -a : a);
+  },0);
+
+  const memberList = members.map(r => ({id:String(r[0]), name:String(r[1]||''), mobile:String(r[2]||''), status:String(r[4]||''), total:memberNet_(r[0],tx)}));
+  const fdrList = fdr.map(r => ({id:String(r[0]||''), amount:num_(r[1]), date:date_(r[2]), tenure:r[3]||'', maturity:date_(r[4]), bank:String(r[5]||''), no:String(r[6]||''), status:fdrStatus_(r), returnDate:date_(r[8]), returned:num_(r[9]), ref:String(r[10]||''), note:String(r[11]||'')}));
+  const recent = tx.slice(-12).reverse().map(r => ({date:date_(r[0]), memberId:String(r[1]||''), name:String(r[2]||''), amount:num_(r[3]), type:String(r[4]||''), note:String(r[5]||'')}));
+
+  return {ok:true, role:'admin', memberCount:members.length, totalDeposit:memberList.reduce((a,m)=>a+m.total,0), thisMonth, mainBank:acc.mainBank, fdrBalance:acc.fdrBalance, totalInstitutional:acc.totalInstitutional, activeFdr:acc.activeFdrCount, pendingFdr:acc.pendingFdr, members:memberList, fdrList, recent, kycRequests:getKycRequests_()};
+}
+
+function saveTransaction(token, data) {
+  session_(token,'admin');
+  const memberId = String(data && data.memberId || '').trim().toUpperCase();
+  const amount = num_(data && data.amount);
+  const type = String(data && data.type || 'Monthly Deposit').trim();
+  if (!memberId) throw new Error('Member ID নির্বাচন করুন।');
+  if (amount <= 0) throw new Error('Amount সঠিকভাবে দিন।');
+  const member = getMembers_().find(r => String(r[0]).toUpperCase() === memberId);
+  if (!member) throw new Error('Member ID পাওয়া যায়নি।');
+  if (String(member[4]||'').toLowerCase() === 'inactive') throw new Error('Inactive member-এর transaction করা যাবে না।');
+  if (type.toLowerCase().includes('withdraw')) {
+    const current = memberNet_(memberId, getTransactions_());
+    if (amount > current) throw new Error('এই সদস্যের বর্তমান নেট জমার চেয়ে Withdrawal বেশি হতে পারবে না।');
+  }
+  const sh=getSheet_(SHEETS.TX);
+  const dt=data.date ? new Date(data.date + 'T00:00:00') : new Date();
+  if (isNaN(dt.getTime())) throw new Error('তারিখ সঠিক নয়।');
+  sh.appendRow([dt,memberId,'',amount,type,String(data.note||'')]);
+  const row=sh.getLastRow();
+  sh.getRange(row,3).setFormula(`=IFERROR(VLOOKUP(B${row},Members!$A$4:$B$25,2,FALSE),"")`);
+  return {ok:true};
+}
+
+function currentMainBank_() { return accounts_().mainBank; }
+
+function saveFDR(token, data) {
+  session_(token,'admin');
+  const amount=num_(data && data.amount);
+  const tenure=num_(data && data.tenure);
+  if (amount<=0) throw new Error('FDR Amount সঠিকভাবে দিন।');
+  if (!data.date) throw new Error('FDR Date দিন।');
+  if (tenure<=0) throw new Error('Tenure (months) দিন।');
+  const main=currentMainBank_();
+  if (amount>main) throw new Error('Main Bank Balance যথেষ্ট নয়। বর্তমান Main Bank: ৳ ' + money_(main));
+  const sh=ensureFdrSheet_();
+  const dt=new Date(data.date+'T00:00:00');
+  if (isNaN(dt.getTime())) throw new Error('FDR Date সঠিক নয়।');
+  const stamp=Utilities.formatDate(new Date(),CFG.TIMEZONE,'yyyyMMdd-HHmmss');
+  const id='FDR-'+stamp;
+  const row=sh.getLastRow()+1;
+  sh.getRange(row,1,1,12).setValues([[id,amount,dt,tenure,'',String(data.bank||''),String(data.fdrNo||''),'','','',String(data.ref||''),String(data.note||'')]]);
+  sh.getRange(row,5).setFormula(`=IF(OR(C${row}="",D${row}=""),"",EDATE(C${row},D${row}))`);
+  sh.getRange(row,8).setFormula(`=IF(B${row}="","",IF(I${row}<>"","Returned",IF(E${row}<TODAY(),"Maturity Pending","Active")))`);
+  SpreadsheetApp.flush();
+  return {ok:true,id:id,mainBankAfter:accounts_().mainBank,fdrBalance:accounts_().fdrBalance};
+}
+
+function returnFDR(token, data) {
+  session_(token,'admin');
+  const id=String(data && data.fdrId || '');
+  const returned=num_(data && data.returnedAmount);
+  if (!id) throw new Error('FDR নির্বাচন করুন।');
+  if (returned<=0) throw new Error('Returned Amount সঠিকভাবে দিন।');
+  const sh=ensureFdrSheet_();
+  const rows=readRows_(sh,2,12);
+  for (let i=0;i<rows.length;i++) {
+    if (String(rows[i][0])===id) {
+      if (rows[i][8]) throw new Error('এই FDR ইতিমধ্যে Returned।');
+      const row=i+2;
+      sh.getRange(row,9).setValue(data.returnDate ? new Date(data.returnDate+'T00:00:00') : new Date());
+      sh.getRange(row,10).setValue(returned);
+      if (data.ref !== undefined) sh.getRange(row,11).setValue(String(data.ref||''));
+      if (data.note !== undefined) sh.getRange(row,12).setValue(String(data.note||''));
+      return {ok:true};
+    }
+  }
+  throw new Error('FDR ID পাওয়া যায়নি।');
+}
+
+function updateMember(token, data) {
+  session_(token,'admin');
+  const id=String(data && data.memberId || '').trim().toUpperCase();
+  if (!id) throw new Error('Member ID দিন।');
+  const sh=getSheet_(SHEETS.MEMBERS);
+  const rows=readRows_(sh,4,7);
+  for (let i=0;i<rows.length;i++) {
+    if (String(rows[i][0]).toUpperCase()===id) {
+      const row=i+4;
+      if (data.name!==undefined) sh.getRange(row,2).setValue(String(data.name||''));
+      if (data.mobile!==undefined) sh.getRange(row,3).setValue(String(data.mobile||''));
+      if (data.status!==undefined) sh.getRange(row,5).setValue(String(data.status||'Active'));
+      if (data.password!==undefined && String(data.password).trim()!=='') sh.getRange(row,7).setValue(String(data.password).trim());
+      return {ok:true};
+    }
+  }
+  throw new Error('Member ID পাওয়া যায়নি।');
+}
+
+function saveBankEntry(token,data) {
+  session_(token,'admin');
+  const amount=num_(data && data.amount);
+  if (amount<=0) throw new Error('Amount সঠিকভাবে দিন।');
+  const type=String(data && data.type || '').trim();
+  const allowed=['Bank Credit','Other Credit','Withdrawal','Other Expense'];
+  if (allowed.indexOf(type)<0) throw new Error('Bank transaction type সঠিক নয়।');
+  const sh=getSheet_(SHEETS.BANK);
+  const dt=data.date ? new Date(data.date+'T00:00:00') : new Date();
+  sh.appendRow([dt,type,amount,String(data.reference||''),String(data.note||'')]);
+  return {ok:true};
+}
+
+function getStatement(token) {
+  const s=session_(token,'member');
+  const d=dashboard(token);
+  return {name:d.name,memberId:d.memberId,mobile:d.mobile,total:d.total,mainBank:d.mainBank,fdrBalance:d.fdrBalance,totalInstitutional:d.totalInstitutional,activeFdr:d.activeFdr,pendingFdr:d.pendingFdr,transactions:d.transactions};
+}
